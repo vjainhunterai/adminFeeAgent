@@ -1,3 +1,6 @@
+docker exec -it adminfee-agent ssh -i /app/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@host.docker.internal echo "SSH works"
+
+
 
 Found it. The issue is in `docker-compose.yml` line 50:
 
