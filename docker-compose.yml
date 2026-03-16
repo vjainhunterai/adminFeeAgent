@@ -14,7 +14,12 @@
 # Backend connects to external services:
 #   → MySQL RDS     (DB_HOST from .env)
 #   → Ollama LLM    (LLM_BASE_URL from .env)
-#   → Airflow        (AIRFLOW_HOST from .env)
+#   → Airflow        (SSH via paramiko using mounted .pem key)
+#
+# SETUP: Place your SSH key at ./secrets/airflow.pem before running:
+#   mkdir -p secrets
+#   cp /path/to/your-key.pem secrets/airflow.pem
+#   chmod 600 secrets/airflow.pem
 # =========================================================
 
 version: "3.9"
@@ -35,6 +40,10 @@ services:
     container_name: adminfee-backend
     env_file:
       - .env                              # Loads all vars from .env file
+    volumes:
+      # Mount SSH key for paramiko to connect to Airflow server
+      # Host: ./secrets/airflow.pem → Container: /app/secrets/airflow.pem
+      - ./secrets/airflow.pem:/app/secrets/airflow.pem:ro
     ports:
       - "8000:8000"                       # Exposed for direct API testing
     restart: always                       # Auto-restart if crash

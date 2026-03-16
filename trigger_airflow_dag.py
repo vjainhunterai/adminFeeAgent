@@ -1,33 +1,40 @@
+import os
 import time
 
 import paramiko
 
 def trigger_airflow_dag():
-    # Ubuntu server details
-    hostname = "172.31.25.132"
-    username = "ubuntu"  # usually 'ubuntu' for AWS EC2
-    pem_file = r"C:\Users\kkishore\Desktop\Cust_t0004 1.pem"
+    # ---------------------------------------------------------------------------
+    # Read SSH config from environment variables (set by docker-compose .env)
+    # This replaces the hardcoded Windows paths that don't work in Docker.
+    #
+    # Inside Docker, the .pem file is mounted at /app/secrets/airflow.pem
+    # via a docker-compose volume (see docker-compose.yml)
+    # ---------------------------------------------------------------------------
+    hostname = os.getenv("SSH_HOST", "172.31.25.132")
+    username = os.getenv("SSH_USERNAME", "ubuntu")
+    pem_file = os.getenv("SSH_KEY_PATH", "/app/secrets/airflow.pem")
 
-    # Airflow command
-    start_airflow_cmd = "bash start_airflow.sh"
-    command = "/home/ubuntu/run_airflow.sh dags trigger execute_adminFee_Data_Pipeline_v1"
+    start_airflow_cmd = os.getenv("AIRFLOW_START_CMD", "bash start_airflow.sh")
+    command = os.getenv("AIRFLOW_TRIGGER_CMD",
+                        "/home/ubuntu/run_airflow.sh dags trigger execute_adminFee_Data_Pipeline_v1")
 
     try:
         # Create SSH client
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        # Connect to Ubuntu
+        # Connect to Airflow server
         ssh.connect(
             hostname=hostname,
             username=username,
             key_filename=pem_file
         )
 
-        print("✅ Connected to Ubuntu server")
+        print(f"Connected to {hostname} as {username}")
 
-        # start QAirflow Services
-        print("\nStarting Airflow services.......")
+        # Start Airflow services
+        print("Starting Airflow services...")
         stdin, stdout, stderr = ssh.exec_command(start_airflow_cmd)
 
         start_out = stdout.read().decode()
@@ -38,25 +45,18 @@ def trigger_airflow_dag():
         if start_error:
             print("Error while starting airflow:", start_error)
 
-        print("\nWaiting for Airflow services to initialize.....")
+        print("Waiting for Airflow services to initialize...")
         time.sleep(15)
 
-        # Execute airflow command
+        # Trigger the DAG
         stdin, stdout, stderr = ssh.exec_command(command)
 
-        # Print DAG list
         dags = stdout.read().decode()
-        #errors = stderr.read().decode()
 
         if dags:
-            print("\n📌 Airflow DAGs:\n")
-            print(dags)
+            print("Airflow output:", dags)
 
-        # if errors:
-        #     print("\n⚠️ Errors:\n")
-        #     print(errors)
-
-        #ssh.close()
+        ssh.close()
 
     except Exception as e:
-        print("❌ Connection Failed:", str(e))
+        raise RuntimeError(f"SSH connection to {hostname} failed: {str(e)}")
