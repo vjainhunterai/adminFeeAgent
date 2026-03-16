@@ -1,3 +1,251 @@
+
+Here are the **final end-to-end steps** to deploy and run the AdminFee Agent:
+
+---
+
+## Step 1: Prerequisites on your EC2/Ubuntu server
+
+```bash
+# Make sure Docker and Docker Compose are installed
+docker --version
+docker-compose --version
+
+# Make sure these are already running on the host:
+# - Ollama LLM (port 11434) with llama3.1:8b loaded
+# - Airflow (with the DAG: execute_adminFee_Data_Pipeline_v1)
+# - MySQL RDS is accessible
+```
+
+---
+
+## Step 2: Clone the repo
+
+```bash
+cd /home/ubuntu
+git clone <your-repo-url> adminFeeAgent
+cd adminFeeAgent
+```
+
+---
+
+## Step 3: Setup `.env`
+
+```bash
+cp .env.example .env
+# Edit .env if needed (DB password, LLM URL, etc.)
+nano .env
+```
+
+Your `.env` should look like:
+```env
+# --- MySQL Database ---
+DB_USER=kishore
+DB_PASSWORD=Gpohealth!#!
+DB_HOST=dev-db-test.c969yoyq9cyy.us-east-1.rds.amazonaws.com
+DB_PORT=3306
+DB_NAME=joblog_metadata
+
+# --- Ollama LLM Server ---
+LLM_BASE_URL=http://172.31.27.7:11434
+LLM_MODEL=llama3.1:8b
+
+# --- S3 Bucket ---
+S3_BUCKET=etlhunter
+S3_INPUT_KEY=adminfee_input/input_template.xlsx
+S3_OUTPUT_PREFIX=adminfee_output
+
+# --- SSH / Airflow (same machine) ---
+SSH_HOST=host.docker.internal
+SSH_USERNAME=ubuntu
+SSH_KEY_PATH=/app/.ssh/id_rsa
+AIRFLOW_START_CMD=bash start_airflow.sh
+AIRFLOW_TRIGGER_CMD=/home/ubuntu/run_airflow.sh dags trigger execute_adminFee_Data_Pipeline_v1
+```
+
+---
+
+## Step 4: Setup SSH key (one-time only)
+
+```bash
+# Generate a dedicated key for container → host SSH
+ssh-keygen -t rsa -N "" -f ~/.ssh/adminfee_key
+
+# Allow this key to SSH into the same machine
+cat ~/.ssh/adminfee_key.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/adminfee_key
+
+# Verify it works
+ssh -i ~/.ssh/adminfee_key ubuntu@localhost "echo OK"
+# Should print: OK
+```
+
+---
+
+## Step 5: Build and start
+
+```bash
+cd /home/ubuntu/adminFeeAgent
+docker-compose up -d --build
+```
+
+This builds two containers:
+| Container | What it does | Port |
+|-----------|-------------|------|
+| `adminfee-backend` | FastAPI + Uvicorn (API server) | 8000 |
+| `adminfee-frontend` | Nginx + React (UI) | 80 |
+
+---
+
+## Step 6: Verify everything is running
+
+```bash
+# Check containers are up
+docker ps
+
+# Check backend health
+curl http://localhost:8000/api/health
+# Should return: {"status":"ok","service":"adminFee-agent-api"}
+
+# Check frontend is serving
+curl -s http://localhost:80 | head -5
+# Should return HTML
+
+# Check backend can SSH to host (Airflow)
+docker exec adminfee-backend python -c "
+import paramiko, os
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect(
+    hostname=os.getenv('SSH_HOST', 'host.docker.internal'),
+    username=os.getenv('SSH_USERNAME', 'ubuntu'),
+    key_filename=os.getenv('SSH_KEY_PATH', '/app/.ssh/id_rsa')
+)
+print('SSH to host: OK')
+ssh.close()
+"
+
+# Check backend can reach MySQL
+docker exec adminfee-backend python -c "
+from config import DB_URI
+from sqlalchemy import create_engine, text
+engine = create_engine(DB_URI)
+with engine.connect() as conn:
+    result = conn.execute(text('SELECT 1'))
+    print('MySQL: OK')
+"
+
+# Check backend can reach Ollama LLM
+docker exec adminfee-backend python -c "
+import os, urllib.request
+url = os.getenv('LLM_BASE_URL', 'http://172.31.27.7:11434')
+resp = urllib.request.urlopen(url)
+print('Ollama: OK')
+"
+```
+
+---
+
+## Step 7: Open the app
+
+Open browser and go to:
+
+```
+http://<your-ec2-public-ip>
+```
+
+You'll see the **hunterAI AdminFee** dashboard with 3 workflows:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  hunterAI AdminFee                                          │
+│  Dashboard | Process New | Analyze Existing | Status Monitor│
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │
+│  │ Process NEW  │ │ Analyze      │ │ Status       │        │
+│  │ Contracts    │ │ EXISTING     │ │ Monitor      │        │
+│  │              │ │ Contracts    │ │              │        │
+│  └──────────────┘ └──────────────┘ └──────────────┘        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Step 8: Use the app
+
+### Workflow 1 — Process NEW Contracts (click "Process New")
+
+1. Choose **Manual Entry** or **S3 Excel File**
+   - Manual: type `PP-OR-123, PP-NS-345`
+   - File: upload `input_template.xlsx` to `s3://etlhunter/adminfee_input/`
+2. Enter **Delivery Name**: `Delivery_9`
+3. Click **Start Processing**
+   - Backend inserts contracts into `admin_fee_metadata`
+   - SSH's to host → starts Airflow → triggers the DAG
+   - Shows pipeline status: `TRIGGERED`
+   - Shows output path: `s3://etlhunter/adminfee_output/Delivery_9`
+4. Click **Generate Summary Report** after processing completes
+   - Compares PO spend vs Report spend per contract
+   - LLM generates a reconciliation report
+
+### Workflow 2 — Monitor Status (click "Status Monitor")
+
+1. See real-time **Total / Completed / In Progress** counts
+2. Toggle **Auto-refresh (60s)** to keep polling
+3. Enter **Delivery Name** and ask questions:
+   - "How many contracts are completed?"
+   - "Which contracts are still processing?"
+   - AI generates SQL, queries DB, explains results
+
+### Workflow 3 — Analyze EXISTING Contracts (click "Analyze Existing")
+
+1. Enter **Delivery Name**: `Delivery 9`
+2. Click **Connect** → normalizes to `delivery_9`, fetches contracts
+3. Ask questions in the chat:
+   - "What is the total spend?"
+   - "Which supplier has highest PO spend?"
+   - "Compare spend across all contracts"
+   - AI generates SQL → runs it → analyzes → formats for business
+
+---
+
+## Troubleshooting
+
+```bash
+# View backend logs
+docker logs adminfee-backend -f
+
+# View frontend logs
+docker logs adminfee-frontend -f
+
+# Restart everything
+docker-compose down && docker-compose up -d --build
+
+# SSH test from inside container
+docker exec -it adminfee-backend bash
+ssh -i /app/.ssh/id_rsa ubuntu@host.docker.internal "echo OK"
+```
+
+---
+
+## Summary of what's running
+
+```
+Browser → :80 (Nginx/React)
+              │
+              ├── /          → React SPA (Dashboard, Process, Analyze, Status)
+              │
+              └── /api/*     → proxy to :8000 (FastAPI)
+                                    │
+                    ┌───────────────┼───────────────┐──────────────┐
+                    │               │               │              │
+                    ▼               ▼               ▼              ▼
+              MySQL RDS       Ollama LLM        S3 Bucket     Airflow
+              (DB queries)    (llama3.1:8b)     (etlhunter)   (same host
+              (SQLAlchemy)    (LangChain)       (boto3)        via SSH)
+```---------------------------------------------------------------------------------------
+
+
 All done. Here's the complete step-by-step Docker deployment guide:
 
 Docker Deployment — Step by Step
