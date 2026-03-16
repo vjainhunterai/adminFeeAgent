@@ -40,6 +40,10 @@ services:
     container_name: adminfee-backend
     env_file:
       - .env                              # Loads all vars from .env file
+    extra_hosts:
+      # Allows container to reach the HOST machine via "host.docker.internal"
+      # Needed because Airflow runs on the same machine as Docker
+      - "host.docker.internal:host-gateway"
     volumes:
       # Mount SSH key for paramiko to connect to Airflow server
       # Host: ./secrets/airflow.pem → Container: /app/secrets/airflow.pem
