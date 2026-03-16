@@ -1,24 +1,64 @@
+# =========================================================
+# docker-compose.yml — Production deployment
+# =========================================================
+# WHAT THIS DOES:
+#   Starts 2 containers:
+#     1. backend  — FastAPI Python app  (port 8000, internal only)
+#     2. frontend — Nginx serving React + proxying /api (port 80)
+#
+# HOW THEY TALK:
+#   Browser → :80 (frontend/Nginx)
+#                 ├── /          → static React files
+#                 └── /api/*     → proxy to backend:8000
+#
+# Backend connects to external services:
+#   → MySQL RDS     (DB_HOST from .env)
+#   → Ollama LLM    (LLM_BASE_URL from .env)
+#   → Airflow        (AIRFLOW_HOST from .env)
+# =========================================================
+
 version: "3.9"
 
 services:
+
+  # ---------------------------------------------------------
+  # BACKEND — FastAPI + Uvicorn
+  # ---------------------------------------------------------
+  # Builds from /backend/Dockerfile
+  # Reads the ENTIRE repo (needs prompts/ folder)
+  # Gets DB/LLM credentials from .env file
+  # ---------------------------------------------------------
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: .                          # Build context = repo root
+      dockerfile: backend/Dockerfile      # Uses backend/Dockerfile
+    container_name: adminfee-backend
+    env_file:
+      - .env                              # Loads all vars from .env file
     ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-    working_dir: /app/backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - "8000:8000"                       # Exposed for direct API testing
+    restart: always                       # Auto-restart if crash
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
+  # ---------------------------------------------------------
+  # FRONTEND — React (built) + Nginx (reverse proxy)
+  # ---------------------------------------------------------
+  # Multi-stage build:
+  #   Stage 1: npm run build → static files
+  #   Stage 2: Nginx serves static + proxies /api to backend
+  # ---------------------------------------------------------
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend                 # Build context = frontend/
       dockerfile: Dockerfile
+    container_name: adminfee-frontend
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: npm run dev -- --host
+      - "80:80"                           # ← This is what users open
+    depends_on:
+      backend:
+        condition: service_healthy         # Wait for backend to be ready
+    restart: always
