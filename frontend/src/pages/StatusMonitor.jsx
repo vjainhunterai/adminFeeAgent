@@ -81,7 +81,9 @@ function StatusMonitor() {
         </div>
 
         {status?.is_completed && (
-          <div className="info-box success">All contracts completed!</div>
+          <div className="info-box success">
+            All contracts completed! Output files uploaded to S3 bucket: <strong>etlhunter</strong>
+          </div>
         )}
 
         <div className="status-actions">

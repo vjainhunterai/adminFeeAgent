@@ -1,6 +1,7 @@
 """
 Phase 1 API routes — Process NEW contracts.
-Wraps the existing adminfee_agent_phase1.py workflow.
+Wraps the existing adminfee_processing_agent.py workflow.
+Updated: S3 file input, paramiko Airflow trigger, S3 output paths.
 """
 
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,7 @@ from wrapper import (
     load_contracts_from_input,
     update_metadata,
     trigger_pipeline,
+    get_output_path,
     get_status_summary,
     ask_status_question,
     get_contract_summary,
@@ -45,11 +47,13 @@ def start_processing(payload: ContractInput):
 
         update_metadata(contracts_list, payload.delivery_name)
         pipeline_result = trigger_pipeline()
+        output_path = get_output_path(payload.delivery_name)
 
         return {
             "contracts": contracts_list,
             "delivery_name": payload.delivery_name,
             "pipeline": pipeline_result,
+            "output": output_path,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -2,20 +2,26 @@
 Wrapper module that provides reusable functions from the existing agent code.
 Imports helpers and builds on the same DB/LLM infrastructure without modifying
 the original agent files.
+
+Updated to match main branch changes:
+  - File input now downloads from S3 via extract_input_template_S3
+  - Pipeline trigger now uses paramiko SSH via trigger_airflow_dag
+  - Output goes to S3 bucket etlhunter at adminfee_output/{delivery}
 """
 
 import re
-import platform as pf
-import subprocess
+import time
 import pandas as pd
 from sqlalchemy import create_engine, text
 from langchain_ollama import ChatOllama
 
 from config import (
-    DB_URI, TABLE_NAME, FILE_PATH, AIRFLOW_CMD, REMOTE_AIRFLOW_CMD,
-    UBUNTU_HOST, LLM_BASE_URL, LLM_MODEL,
+    DB_URI, TABLE_NAME, LLM_BASE_URL, LLM_MODEL,
     STATUS_SYSTEM_MESSAGE, SUMMARY_MESSAGE, SQL_PROMPT,
     DELIVERY_PROMPT, ANALYST_PROMPT, FORMAT_PROMPT,
+    S3_BUCKET, S3_INPUT_KEY, S3_OUTPUT_PREFIX,
+    SSH_HOST, SSH_USERNAME, SSH_KEY_PATH,
+    AIRFLOW_START_CMD, AIRFLOW_TRIGGER_CMD,
 )
 
 engine = create_engine(DB_URI)
@@ -37,7 +43,7 @@ llm_analysis = ChatOllama(
 
 
 # ---------------------------------------------------------------------------
-# Reuse extract_sql_query from existing adminfee_agent_phase1.py logic
+# Reuse extract_sql_query from existing adminfee_processing_agent.py logic
 # ---------------------------------------------------------------------------
 def extract_sql_query(llm_response: str) -> str:
     if not llm_response:
@@ -83,8 +89,20 @@ def run_sql(query: str):
 # ---------------------------------------------------------------------------
 
 def load_contracts_from_input(input_type: str, contracts_csv: str = ""):
+    """
+    Load contracts from S3 file or manual CSV input.
+    - file: Downloads input_template.xlsx from S3 bucket 'etlhunter'
+            using extract_input_template_S3.py (reads encrypted config,
+            gets AWS creds from DB, downloads from S3)
+    - manual: Parses comma-separated contract names
+    """
     if input_type == "file":
-        df = pd.read_excel(FILE_PATH)
+        # Import the S3 extraction function from main branch
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from extract_input_template_S3 import extract_input_template
+        local_path = extract_input_template()
+        df = pd.read_excel(local_path)
         return df["contract_names"].dropna().tolist()
     else:
         return [c.strip() for c in contracts_csv.split(",") if c.strip()]
@@ -101,16 +119,27 @@ def update_metadata(contracts: list, delivery: str):
 
 
 def trigger_pipeline():
+    """
+    Trigger Airflow DAG via paramiko SSH (matches main branch).
+    Connects to Ubuntu server, starts Airflow services, then triggers the DAG.
+    """
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from trigger_airflow_dag import trigger_airflow_dag
     try:
-        os_type = pf.system()
-        if os_type == "Linux":
-            result = subprocess.run(AIRFLOW_CMD, check=True, capture_output=True, text=True)
-        else:
-            ssh_cmd = ["ssh", "-i", "~/.ssh/key.pem", UBUNTU_HOST, REMOTE_AIRFLOW_CMD]
-            result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
-        return {"status": "TRIGGERED", "output": result.stdout}
-    except subprocess.CalledProcessError as e:
-        return {"status": "FAILED", "error": str(e.stderr)}
+        trigger_airflow_dag()
+        return {"status": "TRIGGERED", "output": "Pipeline triggered via SSH"}
+    except Exception as e:
+        return {"status": "FAILED", "error": str(e)}
+
+
+def get_output_path(delivery: str):
+    """Return S3 output path for completed delivery."""
+    return {
+        "bucket": S3_BUCKET,
+        "path": f"{S3_OUTPUT_PREFIX}/{delivery}",
+        "full": f"s3://{S3_BUCKET}/{S3_OUTPUT_PREFIX}/{delivery}",
+    }
 
 
 def get_status_summary():
@@ -162,13 +191,17 @@ def get_contract_summary(contracts: list):
 
         try:
             with engine.begin() as conn:
-                po_result = conn.execute(text(po_sql)).fetchone()
-                report_result = conn.execute(text(report_sql), {"contract_id": contract}).fetchone()
+                po_result = conn.execute(text(po_sql)).mappings().fetchone()
+                report_result = conn.execute(text(report_sql), {"contract_id": contract}).mappings().fetchone()
 
-            po_spend = (po_result.PO_SPEND or 0) if po_result else 0
-            inv_spend = (po_result.INV_SPEND or 0) if po_result else 0
+            po_spend = (po_result["PO_SPEND"] or 0) if po_result else 0
+            inv_spend = (po_result["INV_SPEND"] or 0) if po_result else 0
             selected_spend = max(po_spend, inv_spend)
-            report_spend = (report_result.SALES_VOLUME or 0) if report_result else None
+
+            if report_result:
+                report_spend = report_result["SALES_VOLUME"] or 0
+            else:
+                report_spend = None
 
             if report_spend is None:
                 status = "Contract not found in adminFee report"

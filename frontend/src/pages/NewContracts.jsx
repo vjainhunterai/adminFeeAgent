@@ -70,7 +70,7 @@ function NewContracts() {
                 checked={inputType === 'file'}
                 onChange={(e) => setInputType(e.target.value)}
               />
-              Excel File
+              S3 Excel File
             </label>
           </div>
         </div>
@@ -89,9 +89,15 @@ function NewContracts() {
         ) : (
           <div className="form-group">
             <div className="info-box">
-              Place your <strong>contracts.xlsx</strong> file at:
-              <code>/home/ubuntu/adminfee_data_pipeline/Data/agent_input/contracts.xlsx</code>
-              <br />Column name should be: <strong>contract_name</strong>
+              Upload your <strong>input_template.xlsx</strong> to S3:
+              <code>s3://etlhunter/adminfee_input/input_template.xlsx</code>
+              <br /><br />
+              <strong>Requirements:</strong>
+              <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
+                <li>File name: <strong>input_template.xlsx</strong></li>
+                <li>Column name: <strong>contract_names</strong></li>
+                <li>Bucket: <strong>etlhunter</strong></li>
+              </ul>
             </div>
           </div>
         )}
@@ -132,6 +138,12 @@ function NewContracts() {
                 {result.pipeline?.status}
               </span>
             </div>
+            {result.output && (
+              <div className="detail-row">
+                <span className="detail-label">Output Location:</span>
+                <span><code>{result.output.full}</code></span>
+              </div>
+            )}
           </div>
 
           <button className="btn btn-secondary" onClick={handleSummary} disabled={summaryLoading}>
