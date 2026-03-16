@@ -88,21 +88,42 @@ def run_sql(query: str):
 # Phase 1: Processing workflow steps
 # ---------------------------------------------------------------------------
 
+def _get_aws_credentials():
+    """Fetch AWS credentials from the metadata DB (same source as host scripts)."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT `key`, `value` FROM joblog_metadata.metadata_table_database")
+        ).fetchall()
+    creds = {row[0]: row[1] for row in rows}
+    return creds["S3_AccessKey"], creds["S3_Secret_Access_Key"]
+
+
 def load_contracts_from_input(input_type: str, contracts_csv: str = ""):
     """
     Load contracts from S3 file or manual CSV input.
-    - file: Downloads input_template.xlsx from S3 bucket 'etlhunter'
-            using extract_input_template_S3.py (reads encrypted config,
-            gets AWS creds from DB, downloads from S3)
+    - file: Downloads input_template.xlsx from S3 using AWS creds from DB.
+            Works inside Docker (no host-path dependencies).
     - manual: Parses comma-separated contract names
     """
     if input_type == "file":
-        # Import the S3 extraction function from main branch
-        import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from extract_input_template_S3 import extract_input_template
-        local_path = extract_input_template()
+        import boto3
+        import tempfile
+
+        access_key, secret_key = _get_aws_credentials()
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="us-east-1",
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            s3.download_file(S3_BUCKET, S3_INPUT_KEY, tmp.name)
+            local_path = tmp.name
+
         df = pd.read_excel(local_path)
+        import os
+        os.unlink(local_path)
         return df["contract_names"].dropna().tolist()
     else:
         return [c.strip() for c in contracts_csv.split(",") if c.strip()]
@@ -122,15 +143,13 @@ def trigger_pipeline():
     """
     Trigger Airflow DAG via paramiko SSH (matches main branch).
     Connects to Ubuntu server, starts Airflow services, then triggers the DAG.
+    Raises on failure so the API returns a proper error to the frontend.
     """
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     from trigger_airflow_dag import trigger_airflow_dag
-    try:
-        trigger_airflow_dag()
-        return {"status": "TRIGGERED", "output": "Pipeline triggered via SSH"}
-    except Exception as e:
-        return {"status": "FAILED", "error": str(e)}
+    trigger_airflow_dag()
+    return {"status": "TRIGGERED", "output": "Pipeline triggered via SSH"}
 
 
 def get_output_path(delivery: str):

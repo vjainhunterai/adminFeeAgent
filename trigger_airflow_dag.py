@@ -42,20 +42,30 @@ def trigger_airflow_dag():
         if start_out:
             print(start_out)
         if start_error:
-            print("Error while starting airflow:", start_error)
+            print("Airflow start stderr:", start_error)
 
         print("Waiting for Airflow services to initialize...")
         time.sleep(15)
 
         # Trigger the DAG
+        print(f"Triggering DAG: {command}")
         stdin, stdout, stderr = ssh.exec_command(command)
 
-        dags = stdout.read().decode()
+        exit_status = stdout.channel.recv_exit_status()
+        dag_out = stdout.read().decode()
+        dag_err = stderr.read().decode()
 
-        if dags:
-            print("Airflow output:", dags)
+        if dag_out:
+            print("Airflow output:", dag_out)
+        if dag_err:
+            print("Airflow stderr:", dag_err)
 
         ssh.close()
 
+        if exit_status != 0:
+            raise RuntimeError(
+                f"DAG trigger failed (exit {exit_status}): {dag_err or dag_out}"
+            )
+
     except Exception as e:
-        raise RuntimeError(f"SSH connection to {hostname} failed: {str(e)}")
+        raise RuntimeError(f"SSH/Airflow trigger failed on {hostname}: {str(e)}")
