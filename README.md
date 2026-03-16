@@ -1,4 +1,69 @@
 
+Found it. The issue is in `docker-compose.yml` line 50:
+
+```yaml
+- ~/.ssh/adminfee_key:/app/.ssh/id_rsa:ro
+```
+
+**The problem:** If the file `~/.ssh/adminfee_key` doesn't exist on the host, Docker creates `/app/.ssh/id_rsa` as a **directory** instead of mounting it as a file.
+
+## Fix
+
+Run these commands on your EC2 host:
+
+### 1. Generate the SSH key (if not already done)
+
+```bash
+ssh-keygen -t rsa -N "" -f ~/.ssh/adminfee_key
+cat ~/.ssh/adminfee_key.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/adminfee_key
+```
+
+### 2. Verify the file exists
+
+```bash
+ls -la ~/.ssh/adminfee_key
+# Should show a FILE, not a directory
+# Example: -rw------- 1 ubuntu ubuntu 2602 ... /home/ubuntu/.ssh/adminfee_key
+```
+
+### 3. Restart the containers
+
+```bash
+docker-compose down
+docker-compose up -d --build
+```
+
+### 4. Verify inside the container
+
+```bash
+sudo docker exec adminfee-backend ls -la /app/.ssh/id_rsa
+# Should show a FILE, not a directory
+```
+
+### 5. Re-test SSH
+
+```bash
+sudo docker exec adminfee-backend python -c "
+import paramiko, os
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect(
+    hostname=os.getenv('SSH_HOST', 'host.docker.internal'),
+    username=os.getenv('SSH_USERNAME', 'ubuntu'),
+    key_filename=os.getenv('SSH_KEY_PATH', '/app/.ssh/id_rsa')
+)
+print('SSH to host: OK')
+ssh.close()
+"
+```
+
+**Root cause summary:** When Docker tries to bind-mount a host file that doesn't exist, it creates a directory at the mount point instead. The fix is simply to create the SSH key file on the host **before** starting the container.
+
+=========================
+
+
+
 Here are the **final end-to-end steps** to deploy and run the AdminFee Agent:
 
 ---
