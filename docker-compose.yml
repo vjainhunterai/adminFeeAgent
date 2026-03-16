@@ -14,12 +14,12 @@
 # Backend connects to external services:
 #   → MySQL RDS     (DB_HOST from .env)
 #   → Ollama LLM    (LLM_BASE_URL from .env)
-#   → Airflow        (SSH via paramiko using mounted .pem key)
+#   → Airflow        (SSH via paramiko to same host machine)
 #
-# SETUP: Place your SSH key at ./secrets/airflow.pem before running:
-#   mkdir -p secrets
-#   cp /path/to/your-key.pem secrets/airflow.pem
-#   chmod 600 secrets/airflow.pem
+# SETUP (one-time): Generate a dedicated SSH key for container→host:
+#   ssh-keygen -t rsa -N "" -f ~/.ssh/adminfee_key
+#   cat ~/.ssh/adminfee_key.pub >> ~/.ssh/authorized_keys
+#   chmod 600 ~/.ssh/adminfee_key
 # =========================================================
 
 version: "3.9"
@@ -45,9 +45,9 @@ services:
       # Needed because Airflow runs on the same machine as Docker
       - "host.docker.internal:host-gateway"
     volumes:
-      # Mount SSH key for paramiko to connect to Airflow server
-      # Host: ./secrets/airflow.pem → Container: /app/secrets/airflow.pem
-      - ./secrets/airflow.pem:/app/secrets/airflow.pem:ro
+      # Mount the host's SSH key directly (no separate secrets/ folder needed)
+      # Generated via: ssh-keygen -t rsa -N "" -f ~/.ssh/adminfee_key
+      - ~/.ssh/adminfee_key:/app/.ssh/id_rsa:ro
     ports:
       - "8000:8000"                       # Exposed for direct API testing
     restart: always                       # Auto-restart if crash

@@ -59,11 +59,11 @@ S3_INPUT_KEY = os.getenv("S3_INPUT_KEY", "adminfee_input/input_template.xlsx")
 S3_OUTPUT_PREFIX = os.getenv("S3_OUTPUT_PREFIX", "adminfee_output")
 
 # ---------------------------------------------------------------------------
-# SSH / Airflow  (paramiko connection to trigger DAG)
+# SSH / Airflow  (paramiko SSH to same host machine)
 # ---------------------------------------------------------------------------
-SSH_HOST = os.getenv("SSH_HOST", "172.31.25.132")
+SSH_HOST = os.getenv("SSH_HOST", "host.docker.internal")
 SSH_USERNAME = os.getenv("SSH_USERNAME", "ubuntu")
-SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/app/secrets/airflow.pem")
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/app/.ssh/id_rsa")
 AIRFLOW_START_CMD = os.getenv("AIRFLOW_START_CMD", "bash start_airflow.sh")
 AIRFLOW_TRIGGER_CMD = os.getenv("AIRFLOW_TRIGGER_CMD", "/home/ubuntu/run_airflow.sh dags trigger execute_adminFee_Data_Pipeline_v1")
 

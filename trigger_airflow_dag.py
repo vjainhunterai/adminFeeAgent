@@ -3,32 +3,31 @@ import time
 
 import paramiko
 
+
 def trigger_airflow_dag():
-    # ---------------------------------------------------------------------------
-    # Read SSH config from environment variables (set by docker-compose .env)
-    # This replaces the hardcoded Windows paths that don't work in Docker.
-    #
-    # Inside Docker, the .pem file is mounted at /app/secrets/airflow.pem
-    # via a docker-compose volume (see docker-compose.yml)
-    # ---------------------------------------------------------------------------
-    hostname = os.getenv("SSH_HOST", "172.31.25.132")
+    """
+    Trigger Airflow DAG via SSH to the host machine.
+
+    Since Airflow runs on the SAME machine as Docker, the container
+    SSH's to host.docker.internal using a mounted SSH key from the
+    host's ~/.ssh/adminfee_key (no separate secrets/ folder needed).
+    """
+    hostname = os.getenv("SSH_HOST", "host.docker.internal")
     username = os.getenv("SSH_USERNAME", "ubuntu")
-    pem_file = os.getenv("SSH_KEY_PATH", "/app/secrets/airflow.pem")
+    key_path = os.getenv("SSH_KEY_PATH", "/app/.ssh/id_rsa")
 
     start_airflow_cmd = os.getenv("AIRFLOW_START_CMD", "bash start_airflow.sh")
     command = os.getenv("AIRFLOW_TRIGGER_CMD",
                         "/home/ubuntu/run_airflow.sh dags trigger execute_adminFee_Data_Pipeline_v1")
 
     try:
-        # Create SSH client
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        # Connect to Airflow server
         ssh.connect(
             hostname=hostname,
             username=username,
-            key_filename=pem_file
+            key_filename=key_path
         )
 
         print(f"Connected to {hostname} as {username}")
