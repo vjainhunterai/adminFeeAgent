@@ -47,7 +47,7 @@ services:
     volumes:
       # Mount the host's SSH key directly (no separate secrets/ folder needed)
       # Generated via: ssh-keygen -t rsa -N "" -f ~/.ssh/adminfee_key
-      - ~/.ssh/adminfee_key:/app/.ssh/id_rsa:ro
+      - /home/ubuntu/.ssh/adminfee_key:/app/.ssh/id_rsa:ro
     ports:
       - "8000:8000"                       # Exposed for direct API testing
     restart: always                       # Auto-restart if crash
